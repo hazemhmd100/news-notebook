@@ -1,0 +1,6 @@
+project_id = "arabic-news-notebook"
+
+[functions.notebook]
+# Handler verifies the token with Auth and enforces OWNER_USER_ID itself.
+verify_jwt = false
+import_map = "./functions/deno.json"
