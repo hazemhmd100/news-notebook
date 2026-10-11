@@ -5,9 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   safeURL,
-  feedURL,
+  sourcePageURL,
   fetchText,
-  parseFeed,
   summarize,
   extractArticle,
   demoArticles,
@@ -42,8 +41,8 @@ test("SSRF: only approved HTTPS hosts and ports, no credentials or private addre
     "https://www.bbc.com/arabic/articles/test",
   );
   assert.equal(
-    feedURL("https://www.bbc.com/arabic"),
-    "https://feeds.bbci.co.uk/arabic/rss.xml",
+    sourcePageURL("https://www.bbc.com/arabic"),
+    "https://www.bbc.com/arabic",
   );
 });
 test("redirect destinations are revalidated; oversized streams and nontext content refused", async () => {
@@ -69,21 +68,6 @@ test("redirect destinations are revalidated; oversized streams and nontext conte
         new Response("x", { headers: { "content-type": "image/png" } }),
     }),
   );
-});
-test("RSS/Atom metadata normalized, unsafe links and duplicates skipped", async () => {
-  const items = await parseFeed(
-    "<rss><channel><item><title><![CDATA[أخبار <b>اليوم</b>]]></title><link>https://www.bbc.com/arabic/articles/abc</link><pubDate>bad date</pubDate></item><item><title>repeat</title><link>https://www.bbc.com/arabic/articles/abc#one</link></item><item><title>unsafe</title><link>https://127.0.0.1</link></item></channel></rss>",
-    source,
-  );
-  assert.equal(items.length, 1);
-  assert.equal(items[0].title, "أخبار اليوم");
-  assert.equal(items[0].publishedAt, null);
-  const atom = await parseFeed(
-    '<feed><entry><title>عالم المعرفة</title><link href="https://www.bbc.com/arabic/articles/xyz" rel="alternate"/></entry></feed>',
-    source,
-  );
-  assert.equal(atom.length, 1);
-  await assert.rejects(parseFeed("<!DOCTYPE x><rss/>", source));
 });
 test("summary contains 4–6 complete source sentences; short text fails", () => {
   const text = demoArticles[0].text;

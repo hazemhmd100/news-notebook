@@ -1,6 +1,6 @@
 import { parseHTML } from "linkedom";
 import { Readability } from "@mozilla/readability";
-import { XMLParser } from "fast-xml-parser";
+import { websiteURL, articleLinks, articleMetadata, withinDay } from "./direct.js";
 
 export const LIMIT = 20;
 export class AppError extends Error {
@@ -49,15 +49,8 @@ export function safeURL(value, demo = false) {
       url.searchParams.delete(key);
   return url.href;
 }
-export function feedURL(value, demo = false) {
-  const url = new URL(safeURL(value, demo));
-  if (/^\/(arabic)?\/?$/.test(url.pathname) && /bbc\./.test(url.hostname))
-    return "https://feeds.bbci.co.uk/arabic/rss.xml";
-  if (url.pathname === "/" && /aljazeera.net$/.test(url.hostname))
-    return "https://www.aljazeera.net/aljazeerarss/ar/all.xml";
-  if (/^\/ar\/?$/.test(url.pathname) && url.hostname === "news.un.org")
-    return "https://news.un.org/feed/subscribe/ar/news/all/rss.xml";
-  return url.href;
+export function sourcePageURL(value, demo = false) {
+  return safeURL(websiteURL(safeURL(value, demo)), demo);
 }
 export function validateSettings(input, demo = false) {
   if (
@@ -91,7 +84,7 @@ export function validateSettings(input, demo = false) {
     return {
       id: s.id,
       name: s.name.trim(),
-      url: feedURL(s.url, demo),
+      url: sourcePageURL(s.url, demo),
       section: s.section,
       enabled: s.enabled !== false,
     };
@@ -128,8 +121,8 @@ export async function fetchText(
         signal: controller.signal,
         headers: {
           Accept:
-            "application/rss+xml, application/atom+xml, text/html, application/xml;q=0.9",
-          "User-Agent": "PrivateNewsNotebook/0.1 (personal RSS reader)",
+            "text/html",
+          "User-Agent": "PrivateNewsNotebook/0.1 (personal news reader)",
         },
       });
       if (response.status >= 300 && response.status < 400) {
@@ -189,64 +182,6 @@ export async function fetchText(
   } finally {
     clearTimeout(timer);
   }
-}
-const array = (x) => (x == null ? [] : Array.isArray(x) ? x : [x]);
-const plain = (x) =>
-  typeof x === "object" ? String(x?.["#text"] || "") : String(x || "");
-function cleanText(value) {
-  return parseHTML(`<html><body>${String(value)}</body></html>`)
-    .document.body.textContent.replace(/\s+/g, " ")
-    .trim();
-}
-export async function parseFeed(text, source, demo = false) {
-  if (/<!DOCTYPE|<!ENTITY/i.test(text))
-    throw new AppError("ملف تغذية غير آمن أو غير مدعوم.", 422);
-  const data = new XMLParser({
-    ignoreAttributes: false,
-    processEntities: false,
-  }).parse(text);
-  let entries = array(data.rss?.channel?.item || data.feed?.entry);
-  if (!entries.length)
-    throw new AppError(
-      "لم نجد أخباراً في الرابط. أضف رابط RSS للقسم المطلوب.",
-      422,
-      "NO_FEED",
-    );
-  const articles = [],
-    seen = new Set();
-  for (const item of entries.slice(0, 80)) {
-    try {
-      const links = array(item.link);
-      const link = links.find(
-        (l) =>
-          typeof l === "string" || !l["@_rel"] || l["@_rel"] === "alternate",
-      );
-      const url = safeURL(
-        new URL(
-          cleanText(typeof link === "object" ? link["@_href"] : plain(link)),
-          source.url,
-        ).href,
-        demo,
-      );
-      const title = cleanText(plain(item.title)).slice(0, 300);
-      if (!title || seen.has(url)) continue;
-      seen.add(url);
-      const rawDate = plain(item.pubDate || item.published || item.updated);
-      const date = new Date(rawDate);
-      articles.push({
-        id: await hash(url),
-        title,
-        url,
-        sourceId: source.id,
-        source: source.name,
-        section: source.section,
-        publishedAt: Number.isNaN(date.valueOf()) ? null : date.toISOString(),
-      });
-    } catch {
-      /* Reject unsafe individual feed links, continue other articles. */
-    }
-  }
-  return articles;
 }
 export function extractArticle(html, url) {
   const { document } = parseHTML(html);
@@ -317,8 +252,9 @@ export async function discover(
   countMode,
   demo = false,
   fetcher = fetch,
+  period = "latest",
 ) {
-  const errors = [],
+  const errors = [], notes = [],
     groups = [];
   for (const source of sources) {
     try {
@@ -336,8 +272,25 @@ export async function discover(
           })),
         );
       else {
-        const response = await fetchText(source.url, { fetcher });
-        articles = await parseFeed(response.text, source, demo);
+        const response = await fetchText(sourcePageURL(source.url), { fetcher });
+        const links = articleLinks(response.text, response.url);
+        if (!links.length) throw new AppError("لم نجد مقالات قابلة للقراءة في صفحة الموقع.",422);
+        articles = [];
+        const now = Date.now();
+        for(let offset=0;offset<links.length;offset+=4){
+          const batch=await Promise.all(links.slice(offset,offset+4).map(async link=>{
+            try {
+              const page=await fetchText(safeURL(link.url),{fetcher,timeout:6000});
+              const meta=articleMetadata(page.text);
+              if(!meta.publishedAt || Date.parse(meta.publishedAt)>now) return null;
+              if(period==='24h'&&!withinDay(meta.publishedAt,now))return null;
+              return {id:await hash(link.url),url:link.url,title:meta.title||link.title,publishedAt:meta.publishedAt,sourceId:source.id,source:source.name,section:source.section};
+            } catch { return null; }
+          }));
+          articles.push(...batch.filter(Boolean));
+        }
+        articles.sort((a,b)=>Date.parse(b.publishedAt)-Date.parse(a.publishedAt));
+        notes.push({source:source.name,message:`فُحصت ${links.length} صفحة مقال؛ طابق ${articles.length} التاريخ المطلوب. النتائج من الروابط الظاهرة في الصفحة وليست أرشيف الموقع الكامل.`});
       }
       groups.push(articles.slice(0, limit));
     } catch (e) {
@@ -360,7 +313,7 @@ export async function discover(
     }
   return {
     articles: articles.slice(0, countMode === "total" ? limit : 20),
-    errors,
+    errors, notes,
   };
 }
 export async function buildSummary(
@@ -386,6 +339,7 @@ export async function buildSummary(
   } else {
     const response = await fetchText(url, { fetcher });
     text = extractArticle(response.text, response.url);
+    article = {...article, publishedAt: articleMetadata(response.text).publishedAt};
   }
   return {
     id: await hash(url),

@@ -106,9 +106,9 @@ export function createHandler({
         if (
           !Array.isArray(input.sourceIds) ||
           input.sourceIds.length < 1 ||
-          input.sourceIds.length > 5
+          input.sourceIds.length > 1
         )
-          throw new AppError("اختر من مصدر واحد إلى خمسة مصادر في الدفعة.");
+          throw new AppError("اختر موقعاً واحداً في كل مرة.");
         if (
           !Number.isInteger(input.limit) ||
           input.limit < 1 ||
@@ -123,7 +123,7 @@ export function createHandler({
         if (!sources.length)
           throw new AppError("لا يوجد مصدر مفعّل ضمن اختيارك.");
         return json(
-          await discover(sources, input.limit, input.countMode, demo, fetcher),
+          await discover(sources, input.limit, input.countMode, demo, fetcher, input.period === '24h' ? '24h' : 'latest'),
         );
       }
       if (path === "summarize" && request.method === "POST") {

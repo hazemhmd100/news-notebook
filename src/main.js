@@ -321,7 +321,7 @@ function render() {
   const headings = {
     notebook: [
       "أخبار اليوم، بوضوح.",
-      "اختر مصادرك. اقرأ خلاصة الخبر. احتفظ بما يهمّك.",
+      "اضغط على موقعك المفضل، واقرأ آخر أخباره بالمختصر.",
     ],
     archive: [
       "ما اخترت الاحتفاظ به.",
@@ -409,126 +409,15 @@ function render() {
   app.replaceChildren(el("div", { class: "layout" }, sidebar, main));
 }
 function notebook(main) {
-  const panel = el(
-    "section",
-    { class: "panel" },
-    el(
-      "div",
-      { class: "panel-head" },
-      el("h2", {}, el("span", { class: "step" }, "01 /"), "جهّز قراءتك"),
-      button(
-        "إدارة المصادر ←",
-        () => {
-          page = "sources";
-          render();
-        },
-        "",
-        busy,
-      ),
-    ),
-  );
-  if (!state.sources.length)
-    panel.append(
-      el(
-        "p",
-        { class: "hint" },
-        "ابدأ بإضافة مصدر من صفحة المصادر والأقسام. لا توجد مصادر محفوظة بعد.",
-      ),
-    );
-  panel.append(
-    el(
-      "div",
-      { class: "source-options" },
-      state.sources.map((s) =>
-        el(
-          "label",
-          { class: "source-chip" },
-          el("input", {
-            type: "checkbox",
-            checked: sourceSelection.has(s.id),
-            disabled: busy || !s.enabled,
-            onChange: (e) => {
-              e.target.checked
-                ? sourceSelection.add(s.id)
-                : sourceSelection.delete(s.id);
-            },
-          }),
-          s.name,
-        ),
-      ),
-    ),
-  );
-  panel.append(
-    el(
-      "div",
-      { class: "controls" },
-      field(
-        "عدد الأخبار",
-        el("input", {
-          type: "number",
-          min: 1,
-          max: 20,
-          value: runOptions.limit,
-          disabled: busy,
-          onChange: (e) => {
-            runOptions.limit = Math.max(
-              1,
-              Math.min(20, Number(e.target.value) || 1),
-            );
-            e.target.value = runOptions.limit;
-          },
-        }),
-      ),
-      field(
-        "توزيع العدد",
-        select(
-          [
-            ["total", "إجمالي المصادر"],
-            ["per-source", "لكل مصدر"],
-          ],
-          runOptions.countMode,
-          (v) => (runOptions.countMode = v),
-        ),
-      ),
-      field(
-        "نتائج القراءة",
-        select(
-          [
-            ["replace", "استبدال النتائج"],
-            ["append", "إضافة إلى النتائج"],
-          ],
-          runOptions.resultMode,
-          (v) => (runOptions.resultMode = v),
-        ),
-      ),
-      button(
-        busy ? "جارٍ إعداد الملخصات…" : "اجلب الأخبار ولخّصها ←",
-        run,
-        "primary",
-        busy || !state.sources.length,
-      ),
-      busy
-        ? button(
-            cancelled ? "سيتم الإيقاف…" : "إيقاف بعد الخبر الحالي",
-            () => {
-              cancelled = true;
-              render();
-            },
-            "",
-            cancelled,
-          )
-        : null,
-    ),
-  );
-  panel.querySelectorAll("select").forEach((s) => (s.disabled = busy));
-  panel.append(
-    el(
-      "p",
-      { class: "hint" },
-      "اختر حتى خمسة مصادر في الدفعة. ملخص من 4–6 فقرات مستخرجة من النص الأصلي؛ قد يختلف عدد الأسطر بحسب الشاشة. تحتفظ الأخبار بلغة المصدر. لا يُحفظ شيء في الأرشيف تلقائياً.",
-    ),
-  );
+  const panel=el('section',{class:'panel'},el('div',{class:'panel-head'},el('h2',{},'مواقعك الإخبارية'),button('إدارة المواقع',()=>{page='sources';render();},'',busy)));
+  panel.append(el('div',{class:'source-options'},button('آخر 5 أخبار',()=>{runOptions.period='latest';render();},runOptions.period==='24h'?'':'primary',busy),button('آخر 24 ساعة',()=>{runOptions.period='24h';render();},runOptions.period==='24h'?'primary':'',busy)));
+  panel.append(el('p',{class:'hint'},'اختر الفترة ثم اضغط على الموقع لعرض الأخبار بالمختصر. القراءة مباشرة من صفحات الموقع، دون RSS.'));
+  panel.append(el('div',{class:'source-options'},state.sources.filter(s=>s.enabled).map(s=>button(s.name,()=>{sourceSelection=new Set([s.id]);runOptions.limit=runOptions.period==='24h'?20:5;runOptions.countMode='total';runOptions.resultMode='replace';run();},'source-chip',busy))));
+  if(!state.sources.some(s=>s.enabled))panel.append(el('p',{class:'hint'},'أضف مواقعك مرة واحدة من إدارة المواقع، وستبقى محفوظة هنا.'));
+  if(busy)panel.append(button(cancelled?'سيتم الإيقاف…':'إيقاف بعد الطلب الحالي',()=>{cancelled=true;render();},'',cancelled));
+  panel.append(el('p',{class:'hint'},'الأحدث من المقالات المتاحة في صفحة الموقع بعد التحقق من وقت النشر. آخر 24 ساعة: حتى 20 خبراً ضمن رصيدك اليومي؛ قد لا تشمل النتائج كل أخبار الموقع.'));
   main.append(panel);
+  for(const note of coverageNotes) main.append(el("p",{class:"hint"},`${note.source}: ${note.message}`));
   if (runErrors.length)
     main.append(
       el(
@@ -552,6 +441,7 @@ function notebook(main) {
   );
   articleList(main, results, false);
 }
+let coverageNotes = [];
 async function run() {
   if (busy) return;
   if (!sourceSelection.size)
@@ -562,6 +452,7 @@ async function run() {
   cancelled = false;
   runProgress = { attempted: 0, total: 0 };
   runErrors = [];
+  coverageNotes = [];
   selected.clear();
   message = "جارٍ جلب قائمة الأخبار من المصادر المحددة…";
   messageError = false;
@@ -580,7 +471,9 @@ async function run() {
       sourceIds: [...sourceSelection],
       limit: runOptions.limit,
       countMode: runOptions.countMode,
+      period: runOptions.period || "latest",
     });
+    coverageNotes = found.notes || [];
     runErrors.push(
       ...(found.errors || []).map((e) => `${e.source}: ${e.message}`),
     );
@@ -851,7 +744,7 @@ function sources(main) {
       type: "url",
       dir: "ltr",
       value: current?.url || "",
-      placeholder: "https://news.un.org/ar/rss.xml",
+      placeholder: "https://news.un.org/ar/",
     });
   let chosenSection = current?.section || state.sections[0] || "عام";
   const submit = el(
@@ -896,7 +789,7 @@ function sources(main) {
       "div",
       { class: "controls" },
       field("اسم المصدر", name),
-      field("رابط الموقع أو موجز RSS", url, "wide"),
+      field("رابط الموقع أو قسم الأخبار", url, "wide"),
       field(
         "القسم",
         select(
@@ -926,11 +819,11 @@ function sources(main) {
     ),
   );
   const presets = [
-    ["BBC عربي", "https://feeds.bbci.co.uk/arabic/rss.xml"],
-    ["الجزيرة", "https://www.aljazeera.net/aljazeerarss/ar/all.xml"],
+    ["BBC عربي", "https://www.bbc.com/arabic"],
+    ["الجزيرة", "https://www.aljazeera.net/news/"],
     [
       "أخبار الأمم المتحدة",
-      "https://news.un.org/feed/subscribe/ar/news/all/rss.xml",
+      "https://news.un.org/ar/",
     ],
   ];
   if (state.mode === "demo")
